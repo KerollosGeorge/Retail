@@ -1,0 +1,47 @@
+# dependencies
+/node_modules
+
+# production build
+/dist
+
+# Vite cache
+/.vite
+
+# local env files
+.env
+.env.*.local
+
+# macOS
+.DS_Store
+
+# IDEs and editors
+.vscode
+.idea
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Coverage directory used by testing tools
+/coverage
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Optional REACT devtools settings
+.local-chromium
+
+# Tailwind output (if using any file-based exports)
+/tailwind.config.js
+
+# Build analysis
+/stats.html
+
+# TypeScript cache (if applicable)
+/tsconfig.tsbuildinfo

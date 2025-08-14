@@ -1,0 +1,18 @@
+.light {
+  width: 100%;
+  color: #181818;
+  background-color: rgb(240, 240, 240);
+  min-height: 100vh;
+  transition: background-color 0.3s ease-in-out;
+}
+.dark {
+  width: 100%;
+  min-width: fit-content;
+  color: rgb(195, 195, 195);
+  background-color: #111;
+  min-height: 100vh;
+  transition: background-color 0.3s ease-in-out;
+}
+input {
+  background: transparent;
+}

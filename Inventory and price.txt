@@ -1,0 +1,12 @@
+at frontend connect the product with the inventory , and price with unit price, VAT and discount price
+first if product exists, then update avaliable Status of product to be true
+then add the quantity of the product to the inventory
+second according to the price equation 
+and if there is a discount provided in the request body (the discount End Date should be greater than the current date)
+then calculate the discount price and update the product price
+price = unitPrice + (unitPrice * VAT/100) - discountPrice
+
+after making an order the product should be marked as sold and quantity should be decreased from the inventory 
+if the quantity is 0 then the product should be marked as unavailable
+if the product is not available then the product should be marked as sold
+if the product is sold then the product should be marked as unavailable
