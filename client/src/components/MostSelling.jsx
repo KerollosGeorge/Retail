@@ -19,14 +19,21 @@ export const MostSelling = () => {
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
   const { addToCart } = useCart();
-  const { stockMap, setProducts, setStock, safeAddToCart, pendingAdditions } =
-    useProductStore();
+  const {
+    stockMap,
+    setProducts,
+    setStock,
+    safeAddToCart,
+    pendingAdditions,
+    products: storeProducts,
+  } = useProductStore();
 
   const queryClient = useQueryClient();
   const [start, setStart] = useState(0);
   const isSmallScreen = useMediaQuery({ maxWidth: 640 });
   const itemsPerPage = isSmallScreen ? 2 : 4;
 
+  // Fetch products
   const {
     data: products = [],
     isLoading,
@@ -41,6 +48,7 @@ export const MostSelling = () => {
     cacheTime: 1800000,
   });
 
+  // Hydrate Zustand store once
   useEffect(() => {
     if (products?.length > 0) {
       setProducts(products);
@@ -48,6 +56,13 @@ export const MostSelling = () => {
     }
   }, [products, setProducts, setStock]);
 
+  // Keep store products in sync with stockMap updates
+  const syncedProducts = storeProducts.map((p) => ({
+    ...p,
+    stock: stockMap[p._id] ?? p.stock,
+  }));
+
+  // Fetch favorite products
   const { data: favoriteProducts = [] } = useQuery({
     queryKey: ["favorites", user?.id],
     queryFn: async () => {
@@ -63,6 +78,7 @@ export const MostSelling = () => {
   const isFavorite = (productId) =>
     favoriteProducts.some((fav) => fav._id === productId);
 
+  // Wishlist mutation
   const wishlistMutation = useMutation({
     mutationFn: async (productId) => {
       await axios.put(`/api/user/favoriteProducts/${user.id}`, { productId });
@@ -86,7 +102,8 @@ export const MostSelling = () => {
     },
   });
 
-  const totalItems = products?.length;
+  // Pagination
+  const totalItems = syncedProducts?.length;
   const handleNext = () =>
     setStart((prev) => (prev + itemsPerPage >= totalItems ? prev : prev + 1));
   const handlePrev = () => setStart((prev) => (prev - 1 < 0 ? 0 : prev - 1));
@@ -118,7 +135,7 @@ export const MostSelling = () => {
           />
           <span
             className="cursor-pointer text-2xl text-[#0098b3] hover:underline"
-            onClick={() => navigate("/products?category=top-rated")}
+            onClick={() => navigate("/products?category=most-selling")}
           >
             All
           </span>
@@ -126,8 +143,8 @@ export const MostSelling = () => {
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 mt-6 w-full max-w-6xl px-4">
-        {products.slice(start, start + itemsPerPage).map((product) => {
-          const currentStock = stockMap[product._id] ?? product.stock;
+        {syncedProducts.slice(start, start + itemsPerPage).map((product) => {
+          const currentStock = product.stock;
           const isAdding = pendingAdditions[product._id];
 
           return (

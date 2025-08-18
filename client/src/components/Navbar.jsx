@@ -18,22 +18,31 @@ export const Navbar = () => {
   const location = useLocation();
   const { toggleDarkMode } = useContext(DarkModeContext);
   const { user, logout } = useContext(AuthContext);
-  let firstLetter = user?.username.split(" ")[0].charAt(0).toUpperCase();
-  let lastLetter = user?.username.split(" ")[1]?.charAt(0).toUpperCase() || "";
-  let initials = firstLetter + lastLetter;
+
+  // Safe initials
+  let initials = "";
+  if (user?.username) {
+    const parts = user.username.split(" ");
+    initials =
+      parts[0]?.charAt(0).toUpperCase() +
+      (parts[1]?.charAt(0).toUpperCase() || "");
+  }
+
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [showDropdownSearch, setShowDropdownSearch] = useState(false);
-  const { searchValue, setSearchValue } = useSearch();
 
+  const { searchValue, setSearchValue } = useSearch();
   const { cart } = useCart();
+
   const itemCount =
     (user && cart?.products?.reduce((sum, item) => sum + item.quantity, 0)) ||
     0;
+
   const subtotal =
     (user &&
       cart?.products?.reduce(
-        (sum, item) => sum + item.productId.price * item.quantity,
+        (sum, item) => sum + (item.productId?.price || 0) * item.quantity,
         0
       )) ||
     0;
@@ -50,6 +59,7 @@ export const Navbar = () => {
     { label: "Contact", path: "/contact" },
   ];
 
+  // Close search on outside click
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (
@@ -62,11 +72,11 @@ export const Navbar = () => {
         setShowDropdownSearch(false);
       }
     };
-
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // Reset mobile dropdown on resize
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth >= 768) {
@@ -77,15 +87,15 @@ export const Navbar = () => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // 🔎 FIXED: Search handler
   const handleSearch = () => {
-    if (location.pathname !== "/products") {
-      navigate(`/products?search=${encodeURIComponent(searchValue)}`);
-    } else {
-      navigate({
-        pathname: "/products",
-        search: `?search=${encodeURIComponent(searchValue)}`,
-      });
-    }
+    if (!searchValue.trim()) return; // prevent empty search
+
+    navigate({
+      pathname: "/products",
+      search: `?search=${encodeURIComponent(searchValue.trim())}`,
+    });
+
     setIsSearchFocused(false);
     setShowDropdownSearch(false);
   };
@@ -99,7 +109,7 @@ export const Navbar = () => {
             setIsSearchFocused(false);
             setShowDropdownSearch(false);
           }}
-        ></div>
+        />
       )}
       <nav className="w-full shadow-md px-5 py-3 bg-base-100 text-base-content sticky top-0 z-50">
         <div className="flex justify-between items-center">
@@ -114,7 +124,7 @@ export const Navbar = () => {
           </div>
 
           {/* Center: Search */}
-          <div className="w-full flex md:justify-center md:items-center sm:justify-end">
+          <div className="w-full flex md:justify-center sm:justify-end">
             <div className="flex flex-col w-[40%] gap-3">
               <div
                 ref={searchRef}
@@ -148,7 +158,11 @@ export const Navbar = () => {
                     <li key={link.label}>
                       <Link
                         to={link.path}
-                        className="hover:text-[#0098b3] transition-all"
+                        className={`hover:text-[#0098b3] transition-all ${
+                          location.pathname === link.path
+                            ? "text-[#0098b3]"
+                            : ""
+                        }`}
                       >
                         {link.label}
                       </Link>
@@ -166,7 +180,7 @@ export const Navbar = () => {
                 setIsSearchFocused(true);
               }}
             >
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="text-lg " />
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="text-lg" />
             </button>
           </div>
 
@@ -175,26 +189,8 @@ export const Navbar = () => {
             {/* Dark Mode */}
             <label className="swap swap-rotate cursor-pointer">
               <input type="checkbox" onClick={toggleDarkMode} />
-              <FontAwesomeIcon
-                icon={faSun}
-                style={{
-                  stroke: "#0098b3",
-                  strokeWidth: 20,
-                  fill: "none",
-                  color: "#1D222B",
-                }}
-                className="text-3xl swap-on"
-              />
-              <FontAwesomeIcon
-                icon={faMoon}
-                style={{
-                  stroke: "#0098b3",
-                  strokeWidth: 20,
-                  fill: "none",
-                  color: "#1D222B",
-                }}
-                className="text-3xl swap-off"
-              />
+              <FontAwesomeIcon icon={faSun} className="text-3xl swap-on" />
+              <FontAwesomeIcon icon={faMoon} className="text-3xl swap-off" />
             </label>
 
             {/* Cart */}
@@ -205,16 +201,7 @@ export const Navbar = () => {
                 className="btn btn-ghost btn-circle"
               >
                 <div className="indicator">
-                  <FontAwesomeIcon
-                    icon={faCartShopping}
-                    style={{
-                      stroke: "#0098b3",
-                      strokeWidth: 20,
-                      fill: "none",
-                      color: "#1D222B",
-                    }}
-                    className="text-2xl"
-                  />
+                  <FontAwesomeIcon icon={faCartShopping} className="text-2xl" />
                   <span className="badge badge-sm indicator-item">
                     {itemCount}
                   </span>
@@ -298,7 +285,7 @@ export const Navbar = () => {
 
         {/* Mobile Search Bar */}
         {showDropdownSearch && (
-          <div className="absolute top-0 left-0 w-full z-50 bg-base-100 p-4 shadow-md animate-slideDown flex justify-center">
+          <div className="absolute top-0 left-0 w-full z-50 bg-base-100 p-4 shadow-md flex justify-center">
             <div
               ref={dropdownRef}
               className="w-full max-w-sm flex items-center gap-3 border px-4 py-3 rounded-md border-gray-400 bg-base-200"
@@ -309,19 +296,7 @@ export const Navbar = () => {
                   setIsSearchFocused(false);
                 }}
               >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
+                ✕
               </button>
               <input
                 type="text"

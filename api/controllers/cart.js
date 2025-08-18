@@ -1,252 +1,285 @@
+// controllers/cartController.js
 import Cart from "../models/Cart.js";
 import Product from "../models/Product.js";
 import User from "../models/User.js";
 import { StatusCodes } from "http-status-codes";
-import { CreateError } from "../utils/customError.js";
 
-export const addToCart = async (req, res, next) => {
+// helper to compute total on a populated cart
+function computeCartTotal(populatedCart) {
+  let sum = 0;
+  if (!populatedCart?.products) return 0;
+  for (const item of populatedCart.products) {
+    const prod = item.productId;
+    if (prod) sum += prod.price * item.quantity;
+  }
+  return sum;
+}
+
+// Add to Cart (atomic stock decrement + upsert cart item)
+export const addToCart = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { productId } = req.body;
+    const { productId, quantity = 1 } = req.body;
 
-    if (!productId) {
-      return res.status(400).json({ message: "Product ID is required." });
+    if (!productId || quantity < 1) {
+      return res
+        .status(StatusCodes.BAD_REQUEST)
+        .json({ message: "Product ID and positive quantity are required." });
     }
 
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found." });
+    // 1) Atomically decrement stock if enough available
+    const updatedProduct = await Product.findOneAndUpdate(
+      { _id: productId, stock: { $gte: quantity } },
+      { $inc: { stock: -quantity } },
+      { new: true }
+    );
+    if (!updatedProduct) {
+      return res
+        .status(StatusCodes.BAD_REQUEST)
+        .json({ message: "Insufficient stock available." });
     }
 
-    if (product.stock < 1) {
-      return res.status(400).json({ message: "Product is out of stock." });
-    }
-
-    let cart = await Cart.findOne({ userId });
-
-    if (!cart) {
-      cart = new Cart({ userId, products: [] });
-    }
-
-    const itemIndex = cart.products.findIndex(
-      (item) => item.productId.toString() === productId
+    // 2) Add/increase item in cart (try increment existing, else push)
+    let cart = await Cart.findOneAndUpdate(
+      { userId, "products.productId": productId },
+      { $inc: { "products.$.quantity": quantity } },
+      { new: true }
     );
 
-    if (itemIndex > -1) {
-      cart.products[itemIndex].quantity += 1;
-    } else {
-      cart.products.push({ productId, quantity: 1 });
+    if (!cart) {
+      cart = await Cart.findOneAndUpdate(
+        { userId },
+        {
+          $setOnInsert: { userId },
+          $push: { products: { productId, quantity } },
+        },
+        { upsert: true, new: true }
+      );
     }
 
-    product.stock -= 1;
-    await product.save();
-    await cart.save();
-
-    const updatedProduct = await Product.findById(productId);
+    // 3) Return populated cart + total + updatedProduct
     const populatedCart = await Cart.findOne({ userId }).populate(
       "products.productId"
     );
+    const total = computeCartTotal(populatedCart);
 
-    const total = await populatedCart.products.reduce(
-      async (accPromise, item) => {
-        const acc = await accPromise;
-        const prod = item.productId;
-        return acc + (prod ? prod.price * item.quantity : 0);
-      },
-      Promise.resolve(0)
-    );
-
-    res.status(200).json({
-      message: "Product added to cart",
+    return res.status(StatusCodes.OK).json({
+      message: "Product added to cart.",
       cart: populatedCart,
-      total: await total,
+      total,
       updatedProduct,
     });
   } catch (error) {
     console.error("Add to cart error:", error);
-    res.status(500).json({ message: "Internal server error." });
+    return res
+      .status(StatusCodes.INTERNAL_SERVER_ERROR)
+      .json({ message: "Internal server error." });
   }
 };
 
-// Update Product Quantity in Cart
-export const updateProductQuantityInCart = async (req, res, next) => {
+// Update Product Quantity in Cart (atomic delta on stock)
+export const updateProductQuantityInCart = async (req, res) => {
   try {
     const userId = req.user.id;
     const { productId, quantity } = req.body;
 
     if (!productId || quantity == null || quantity < 1) {
       return res
-        .status(400)
+        .status(StatusCodes.BAD_REQUEST)
         .json({ message: "Invalid quantity or product ID." });
     }
 
     const cart = await Cart.findOne({ userId });
-    if (!cart) return res.status(404).json({ message: "Cart not found" });
+    if (!cart)
+      return res
+        .status(StatusCodes.NOT_FOUND)
+        .json({ message: "Cart not found." });
 
-    const product = await Product.findById(productId);
-    if (!product) return res.status(404).json({ message: "Product not found" });
-
-    const itemInCart = cart.products.find(
-      (item) => item.productId.toString() === productId
+    const item = cart.products.find(
+      (p) => p.productId.toString() === productId
     );
-    if (!itemInCart)
-      return res.status(404).json({ message: "Product not in cart" });
+    if (!item)
+      return res
+        .status(StatusCodes.NOT_FOUND)
+        .json({ message: "Product not in cart." });
 
-    const quantityChange = quantity - itemInCart.quantity;
+    const delta = quantity - item.quantity;
+    let updatedProduct;
 
-    if (quantityChange > 0 && product.stock < quantityChange) {
-      return res.status(400).json({ message: "Insufficient stock available" });
+    if (delta > 0) {
+      // need more units → try to decrement stock atomically
+      updatedProduct = await Product.findOneAndUpdate(
+        { _id: productId, stock: { $gte: delta } },
+        { $inc: { stock: -delta } },
+        { new: true }
+      );
+      if (!updatedProduct) {
+        return res
+          .status(StatusCodes.BAD_REQUEST)
+          .json({ message: "Insufficient stock available." });
+      }
+    } else if (delta < 0) {
+      // reducing quantity → restore stock
+      updatedProduct = await Product.findOneAndUpdate(
+        { _id: productId },
+        { $inc: { stock: Math.abs(delta) } },
+        { new: true }
+      );
+    } else {
+      // no change
+      updatedProduct = await Product.findById(productId);
     }
 
-    itemInCart.quantity = quantity;
-    product.stock -= quantityChange;
-
-    await product.save();
+    // update item quantity in cart and save
+    item.quantity = quantity;
     await cart.save();
 
-    // ✅ Populate productId after saving the cart
     const populatedCart = await Cart.findOne({ userId }).populate(
       "products.productId"
     );
+    const total = computeCartTotal(populatedCart);
 
-    const total = await populatedCart.products.reduce(
-      async (accPromise, item) => {
-        const acc = await accPromise;
-        const prod = item.productId;
-        return acc + (prod ? prod.price * item.quantity : 0);
-      },
-      Promise.resolve(0)
-    );
-
-    res.status(200).json({
-      message: "Quantity updated",
-      cart: populatedCart, // ✅ send populated cart
-      total: await total,
-      updatedProduct: await Product.findById(productId), // still return updated product for Zustand
+    return res.status(StatusCodes.OK).json({
+      message: "Quantity updated.",
+      cart: populatedCart,
+      total,
+      updatedProduct,
     });
   } catch (error) {
     console.error("Update quantity error:", error);
-    res.status(500).json({ message: "Internal server error" });
+    return res
+      .status(StatusCodes.INTERNAL_SERVER_ERROR)
+      .json({ message: "Internal server error." });
   }
 };
 
-// Remove Product from Cart
-export const removeProductFromCart = async (req, res, next) => {
+// Remove Product from Cart (restore exact qty)
+export const removeProductFromCart = async (req, res) => {
   try {
     const userId = req.user.id;
     const { productId } = req.body;
 
     if (!productId) {
-      return res.status(400).json({ message: "Product ID is required." });
+      return res
+        .status(StatusCodes.BAD_REQUEST)
+        .json({ message: "Product ID is required." });
     }
 
     const cart = await Cart.findOne({ userId });
-    if (!cart) {
-      return res.status(404).json({ message: "Cart not found." });
+    if (!cart)
+      return res
+        .status(StatusCodes.NOT_FOUND)
+        .json({ message: "Cart not found." });
+
+    const idx = cart.products.findIndex(
+      (p) => p.productId.toString() === productId
+    );
+    if (idx === -1) {
+      return res
+        .status(StatusCodes.NOT_FOUND)
+        .json({ message: "Product not found in cart." });
     }
 
-    const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found." });
-    }
+    const removedQty = cart.products[idx].quantity;
 
-    const itemIndex = cart.products.findIndex(
-      (item) => item.productId.toString() === productId
+    // restore stock atomically
+    const updatedProduct = await Product.findOneAndUpdate(
+      { _id: productId },
+      { $inc: { stock: removedQty } },
+      { new: true }
     );
 
-    if (itemIndex === -1) {
-      return res.status(404).json({ message: "Product not found in cart." });
-    }
-
-    const removedQuantity = cart.products[itemIndex].quantity;
-    product.stock += removedQuantity;
-
-    cart.products.splice(itemIndex, 1);
-
-    await product.save();
+    // remove item from cart
+    cart.products.splice(idx, 1);
     await cart.save();
 
-    const updatedProduct = await Product.findById(productId);
     const populatedCart = await Cart.findOne({ userId }).populate(
       "products.productId"
     );
+    const total = computeCartTotal(populatedCart);
 
-    const total = await populatedCart.products.reduce(
-      async (accPromise, item) => {
-        const acc = await accPromise;
-        const prod = item.productId;
-        return acc + (prod ? prod.price * item.quantity : 0);
-      },
-      Promise.resolve(0)
-    );
-
-    res.status(200).json({
-      message: "Product removed from cart",
+    return res.status(StatusCodes.OK).json({
+      message: "Product removed from cart.",
       cart: populatedCart,
-      total: await total,
+      total,
       updatedProduct,
     });
   } catch (error) {
     console.error("Remove from cart error:", error);
-    res.status(500).json({ message: "Internal server error." });
+    return res
+      .status(StatusCodes.INTERNAL_SERVER_ERROR)
+      .json({ message: "Internal server error." });
   }
 };
 
-// Clear Cart
-export const clearCart = async (req, res, next) => {
+// Clear Cart (restore all stock + return restoredProducts)
+export const clearCart = async (req, res) => {
   try {
     const userId = req.user.id;
-
     const cart = await Cart.findOne({ userId });
-    if (!cart) {
-      return res.status(404).json({ message: "Cart not found." });
-    }
+    if (!cart)
+      return res
+        .status(StatusCodes.NOT_FOUND)
+        .json({ message: "Cart not found." });
 
-    // Restore product stock for each item
+    const restoredProducts = [];
+
+    // restore stock for each item
     for (const item of cart.products) {
-      const product = await Product.findById(item.productId);
-      if (product) {
-        product.stock += item.quantity;
-        await product.save();
-      }
+      const updated = await Product.findOneAndUpdate(
+        { _id: item.productId },
+        { $inc: { stock: item.quantity } },
+        { new: true }
+      );
+      if (updated) restoredProducts.push(updated);
     }
 
-    // Clear all items from the cart
+    // clear cart
     cart.products = [];
     await cart.save();
 
-    // Return updated, empty cart with populated structure
     const populatedCart = await Cart.findOne({ userId }).populate(
       "products.productId"
     );
 
-    res.status(200).json({
+    return res.status(StatusCodes.OK).json({
       message: "Cart cleared successfully.",
-      cart: populatedCart,
+      cart: populatedCart, // empty populated structure
       total: 0,
+      restoredProducts, // <<< frontend uses this to refresh stockMap
     });
   } catch (error) {
     console.error("Clear cart error:", error);
-    res.status(500).json({ message: "Internal server error." });
+    return res
+      .status(StatusCodes.INTERNAL_SERVER_ERROR)
+      .json({ message: "Internal server error." });
   }
 };
 
-// Get Cart
-export const getCart = async (req, res, next) => {
+// Get Cart (always populated + total)
+export const getCart = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
     if (!user)
-      return next(CreateError(StatusCodes.NOT_FOUND, "User not found"));
+      return res
+        .status(StatusCodes.NOT_FOUND)
+        .json({ message: "User not found." });
 
     const cart = await Cart.findOne({ userId: req.user.id }).populate(
       "products.productId"
     );
     if (!cart)
-      return next(CreateError(StatusCodes.NOT_FOUND, "Cart not found"));
+      return res
+        .status(StatusCodes.NOT_FOUND)
+        .json({ message: "Cart not found." });
 
-    res.status(StatusCodes.OK).json(cart);
+    const total = computeCartTotal(cart);
+    return res.status(StatusCodes.OK).json({ ...cart.toObject(), total });
   } catch (error) {
-    next(error);
+    console.error("Get cart error:", error);
+    return res
+      .status(StatusCodes.INTERNAL_SERVER_ERROR)
+      .json({ message: "Internal server error." });
   }
 };
 

@@ -30,7 +30,7 @@ export const Products = () => {
 
   const queryClient = useQueryClient();
   const isSmallScreen = useMediaQuery({ maxWidth: 640 });
-  const itemsPerPage = isSmallScreen ? 2 : 4;
+  const itemsPerPage = isSmallScreen ? 2 : 4; // currently unused
 
   // Fetch products by category
   const { isLoading, isError } = useQuery({
@@ -44,7 +44,7 @@ export const Products = () => {
         case "top-rated":
           endpoint = "/api/product/topRated";
           break;
-        case "offers":
+        case "discounts":
           endpoint = "/api/product/discounts";
           break;
         case "private":
@@ -54,7 +54,7 @@ export const Products = () => {
           endpoint = "/api/product";
       }
       const { data } = await axios.get(endpoint);
-      setProducts(data); // Zustand: sets both products and stockMap
+      setProducts(data); // Zustand sync
       return data;
     },
   });
@@ -84,9 +84,12 @@ export const Products = () => {
       await queryClient.cancelQueries(["favorites", user.id]);
       const previous = queryClient.getQueryData(["favorites", user.id]) || [];
       const exists = previous.some((f) => f._id === productId);
+
+      // keep consistent structure (not just {_id})
       const updated = exists
         ? previous.filter((f) => f._id !== productId)
         : [...previous, { _id: productId }];
+
       queryClient.setQueryData(["favorites", user.id], updated);
       return { previous };
     },
@@ -103,7 +106,7 @@ export const Products = () => {
     if (urlSearch !== searchValue) {
       setSearchValue(urlSearch);
     }
-  }, [urlSearch]);
+  }, [urlSearch, searchValue, setSearchValue]);
 
   const filteredProducts = products.filter(
     (p) =>
@@ -137,15 +140,17 @@ export const Products = () => {
             ? "Most Selling"
             : category === "top-rated"
             ? "Top Rated"
-            : category === "offers"
+            : category === "discounts"
             ? "Special Offers"
             : category === "private"
-            ? "Private Products"
+            ? "Negmet Heliopolis Products"
             : "All Products"}
         </h1>
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
           {filteredProducts.map((product) => {
             const stock = stockMap[product._id] ?? product.stock;
+            const imageUrl = product.images?.[0]?.url || "/placeholder.png";
+
             return (
               <div
                 key={product._id}
@@ -153,6 +158,7 @@ export const Products = () => {
               >
                 <button
                   title="Add to Wishlist"
+                  aria-label="Add to Wishlist"
                   onClick={(e) => {
                     e.stopPropagation();
                     e.preventDefault();
@@ -183,8 +189,8 @@ export const Products = () => {
 
                 <Link to={`/product/${product._id}`}>
                   <img
-                    src={product.images[0].url}
-                    alt={product.title}
+                    src={imageUrl}
+                    alt={product.name || "Product"}
                     className="w-full h-[250px] object-cover"
                   />
                   <div className="p-4">
@@ -222,6 +228,7 @@ export const Products = () => {
                   <button
                     disabled={stock === 0}
                     title="Add to Cart"
+                    aria-label="Add to Cart"
                     onClick={async (e) => {
                       e.stopPropagation();
                       if (!user) {
@@ -229,14 +236,18 @@ export const Products = () => {
                         navigate("/login");
                         return;
                       }
-                      const updated = await addToCart(product._id, stock);
-                      if (
-                        updated &&
-                        updated._id &&
-                        typeof updated.stock === "number"
-                      ) {
-                        updateProductStock(updated._id, updated.stock);
-                      }
+                      await safeAddToCart(product._id, async () => {
+                        const result = await addToCart(product._id);
+                        if (
+                          result?.updatedProduct &&
+                          result.updatedProduct._id
+                        ) {
+                          updateProductStock(
+                            result.updatedProduct._id,
+                            result.updatedProduct.stock
+                          );
+                        }
+                      });
                     }}
                     className={`${
                       stock === 0

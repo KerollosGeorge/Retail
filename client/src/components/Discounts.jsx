@@ -1,10 +1,10 @@
-// TopRated-style Discounts Component
-import { useContext, useState, useEffect } from "react";
+// components/Discounts.jsx
+import { useContext, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
+  faHeart,
   faChevronLeft,
   faChevronRight,
-  faHeart,
 } from "@fortawesome/free-solid-svg-icons";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
@@ -12,43 +12,66 @@ import toast from "react-hot-toast";
 import { AuthContext } from "../context/AuthContext.jsx";
 import axios from "axios";
 import { useCart } from "../context/CartContext.jsx";
-import { useMediaQuery } from "react-responsive";
 import { FaShoppingCart } from "react-icons/fa";
 import { useProductStore } from "../context/ProductsStore.js";
-import { CountDown } from "./CountDown.jsx";
+import { useMediaQuery } from "react-responsive";
 
 export const Discounts = () => {
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
-  const { addToCart, cartItems } = useCart();
+  const { addToCart, cart } = useCart();
+  const {
+    stockMap,
+    setProducts,
+    updateProductStock,
+    safeAddToCart,
+    pendingAdditions,
+  } = useProductStore();
+
   const queryClient = useQueryClient();
   const [start, setStart] = useState(0);
-
   const isSmallScreen = useMediaQuery({ maxWidth: 640 });
   const itemsPerPage = isSmallScreen ? 2 : 4;
 
+  // ✅ fetch only discounted products
   const {
     data: products = [],
     isLoading,
     error,
-    refetch,
   } = useQuery({
-    queryKey: ["discountProducts"],
+    queryKey: ["discountedProducts"],
     queryFn: async () => {
-      const { data } = await axios.get("/api/product/discounts");
+      const { data } = await axios.get("/api/product/discounts"); // <-- backend route should return discounted products
       return data;
     },
     staleTime: 600000,
     cacheTime: 1800000,
-    retry: 2,
   });
 
-  const stockMap = useProductStore((state) => state.stockMap);
-
+  // ✅ Hydrate stockMap
   useEffect(() => {
-    refetch();
-  }, [cartItems, refetch]);
+    if (products?.length > 0) {
+      setProducts(products);
+    }
+  }, [products, setProducts]);
 
+  // ✅ refresh stock after cart changes
+  useEffect(() => {
+    const refreshStock = async () => {
+      if (products.length === 0) return;
+      try {
+        const res = await axios.get("/api/product/discounts");
+        res.data.forEach((p) => {
+          updateProductStock(p._id, p.stock);
+        });
+      } catch (err) {
+        console.error("Failed to refresh stock:", err);
+      }
+    };
+    refreshStock();
+  }, [cart, products, updateProductStock]);
+
+  // ✅ favorites
   const { data: favoriteProducts = [] } = useQuery({
     queryKey: ["favorites", user?.id],
     queryFn: async () => {
@@ -59,7 +82,6 @@ export const Discounts = () => {
     enabled: !!user?.id,
     staleTime: 600000,
     cacheTime: 1800000,
-    retry: 2,
   });
 
   const isFavorite = (productId) =>
@@ -90,32 +112,22 @@ export const Discounts = () => {
 
   const totalItems = products.length;
   const handleNext = () =>
-    setStart((prev) => (prev + 1 >= totalItems ? prev : prev + 1));
+    setStart((prev) => (prev + itemsPerPage >= totalItems ? prev : prev + 1));
   const handlePrev = () => setStart((prev) => (prev - 1 < 0 ? 0 : prev - 1));
 
-  if (isLoading) return <p>Loading discounted products...</p>;
+  if (isLoading) return <p className="text-center text-white">Loading...</p>;
   if (error)
-    return <p className="text-red-500">{error?.response?.data?.message}</p>;
-  if (!products.length) {
-    return (
-      <div className="w-full max-w-6xl flex flex-col mt-8 px-4">
-        <span className="text-3xl font-bold">OFFERS</span>
-        <p className="text-gray-500 indent-9">
-          No discounted products available right now.
-        </p>
-      </div>
-    );
-  }
+    return <p className="text-red-500">Failed to load discounted products</p>;
 
   return (
     <div className="w-full flex flex-col items-center mt-8">
       <div className="w-full max-w-6xl flex justify-between items-center px-4">
-        <h2 className="text-3xl font-bold ">Offers</h2>
+        <h2 className="text-3xl font-bold">Discounts</h2>
         <div className="flex items-center gap-4">
           <FontAwesomeIcon
             icon={faChevronLeft}
-            className={`text-2xl text-[#0098b3]  ${
-              start === 0 ? "cursor-not-allowed" : " cursor-pointer"
+            className={`text-2xl text-[#0098b3] ${
+              start === 0 ? "cursor-not-allowed" : "cursor-pointer"
             }`}
             onClick={start === 0 ? null : handlePrev}
           />
@@ -123,14 +135,14 @@ export const Discounts = () => {
             icon={faChevronRight}
             className={`text-2xl text-[#0098b3] ${
               start + itemsPerPage >= totalItems
-                ? " cursor-not-allowed"
+                ? "cursor-not-allowed"
                 : "cursor-pointer"
             }`}
             onClick={start + itemsPerPage >= totalItems ? null : handleNext}
           />
           <span
             className="cursor-pointer text-2xl text-[#0098b3] hover:underline"
-            onClick={() => navigate("products?category=offers")}
+            onClick={() => navigate("/products?category=discounts")}
           >
             All
           </span>
@@ -139,7 +151,8 @@ export const Discounts = () => {
 
       <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 mt-6 w-full max-w-6xl px-4">
         {products.slice(start, start + itemsPerPage).map((product) => {
-          const stock = stockMap[product._id] ?? product.stock;
+          const currentStock = stockMap[product._id] ?? product.stock;
+          const isAdding = pendingAdditions[product._id];
 
           return (
             <div
@@ -149,7 +162,6 @@ export const Discounts = () => {
               <button
                 title="Add to Wishlist"
                 onClick={(e) => {
-                  e.stopPropagation();
                   e.preventDefault();
                   if (!user) {
                     toast.error("Please log in to add to wishlist.");
@@ -162,7 +174,7 @@ export const Discounts = () => {
               >
                 <FontAwesomeIcon
                   icon={faHeart}
-                  className={`text-xl transition-all  ${
+                  className={`text-xl transition-all ${
                     isFavorite(product._id)
                       ? "text-red-500 scale-110"
                       : "text-gray-200"
@@ -170,16 +182,14 @@ export const Discounts = () => {
                 />
               </button>
 
-              {product.discount && (
-                <div className="absolute top-0 left-0 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-tl-2xl rounded-md z-40">
-                  {product.discount}% OFF
-                </div>
-              )}
+              <div className="absolute top-0 left-0 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-tl-2xl rounded-md z-40">
+                {product.discount}% OFF
+              </div>
 
               <Link to={`/product/${product._id}`}>
                 <img
-                  src={product.images[0].url}
-                  alt={product.title}
+                  src={product.images?.[0]?.url}
+                  alt={product.name}
                   className="w-full h-[250px] object-cover"
                 />
                 <div className="p-4">
@@ -189,37 +199,29 @@ export const Discounts = () => {
                   <p className="text-sm text-gray-400 mb-1">
                     {product.category}
                   </p>
-                  {product.discount ? (
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-indigo-500 font-bold text-base">
-                        EGP {product.discountedPrice}
-                      </span>
-                      <span className="text-md text-gray-400 line-through">
-                        EGP {product.price}
-                      </span>
-                    </div>
-                  ) : (
-                    <p className="text-indigo-500 font-bold text-base mt-1">
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-indigo-500 font-bold text-base">
+                      EGP {product.discountedPrice}
+                    </span>
+                    <span className="text-md text-gray-400 line-through">
                       EGP {product.price}
-                    </p>
-                  )}
+                    </span>
+                  </div>
                   <p
                     className={`text-sm mt-1 ${
-                      stock > 0 ? "text-green-500" : "text-red-500"
+                      currentStock > 0 ? "text-green-500" : "text-red-500"
                     }`}
                   >
-                    {stock > 0 ? `In Stock: ${stock}` : "Out of Stock"}
+                    {currentStock > 0
+                      ? `In Stock: ${currentStock}`
+                      : "Out of Stock"}
                   </p>
-                  <div className="mt-2">
-                    <CountDown date={product.discountEndDate} />
-                  </div>
                 </div>
               </Link>
 
               <div className="px-4 pb-4 flex items-center justify-center">
                 <button
-                  disabled={stock === 0}
-                  title="Add to Cart"
+                  disabled={currentStock === 0 || isAdding}
                   onClick={(e) => {
                     e.stopPropagation();
                     if (!user) {
@@ -227,15 +229,16 @@ export const Discounts = () => {
                       navigate("/login");
                       return;
                     }
-                    addToCart(product._id, stock);
+                    safeAddToCart(product._id, (pid) => addToCart(pid, 1));
                   }}
                   className={`${
-                    stock === 0
+                    currentStock === 0 || isAdding
                       ? "bg-gray-400 cursor-not-allowed"
                       : "bg-indigo-600 hover:bg-indigo-700"
                   } text-white px-16 py-1 rounded-lg text-sm flex items-center gap-1`}
                 >
-                  <FaShoppingCart /> Add
+                  <FaShoppingCart />
+                  {isAdding ? "Adding..." : "Add"}
                 </button>
               </div>
             </div>

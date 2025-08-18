@@ -18,10 +18,14 @@ import { useMediaQuery } from "react-responsive";
 export const TopRated = () => {
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
-  const { addToCart } = useCart();
-
-  const { stockMap, setProducts, setStock, safeAddToCart, pendingAdditions } =
-    useProductStore();
+  const { addToCart, cart } = useCart(); // ✅ watch cart changes
+  const {
+    stockMap,
+    setProducts,
+    updateProductStock,
+    safeAddToCart,
+    pendingAdditions,
+  } = useProductStore();
 
   const queryClient = useQueryClient();
   const [start, setStart] = useState(0);
@@ -42,14 +46,28 @@ export const TopRated = () => {
     cacheTime: 1800000,
   });
 
+  // ✅ Hydrate stockMap when products first load
   useEffect(() => {
     if (products?.length > 0) {
       setProducts(products);
-      products.forEach((p) => {
-        setStock(p._id, p.stock);
-      });
     }
-  }, [products, setProducts, setStock]);
+  }, [products, setProducts]);
+
+  // ✅ Refresh stock after cart changes
+  useEffect(() => {
+    const refreshStock = async () => {
+      if (products.length === 0) return;
+      try {
+        const res = await axios.get("/api/product/topRated");
+        res.data.forEach((p) => {
+          updateProductStock(p._id, p.stock);
+        });
+      } catch (err) {
+        console.error("Failed to refresh stock:", err);
+      }
+    };
+    refreshStock();
+  }, [cart, products, updateProductStock]);
 
   const { data: favoriteProducts = [] } = useQuery({
     queryKey: ["favorites", user?.id],
@@ -216,7 +234,7 @@ export const TopRated = () => {
                       navigate("/login");
                       return;
                     }
-                    safeAddToCart(product._id, addToCart);
+                    safeAddToCart(product._id, (pid) => addToCart(pid, 1));
                   }}
                   className={`${
                     currentStock === 0 || isAdding

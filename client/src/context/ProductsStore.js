@@ -2,55 +2,54 @@
 import { create } from "zustand";
 
 export const useProductStore = create((set, get) => ({
-  stockMap: {}, // Holds live stock data
-  pendingAdditions: {}, // Flags to prevent multiple clicks
+  stockMap: {},
+  pendingAdditions: {},
   products: [],
 
-  // Set initial products and stock
-  setProducts: (products) => {
-    const stockMap = {};
-    products.forEach((product) => {
-      stockMap[product._id] = product.stock;
-    });
-    set({ products, stockMap });
-  },
+  // Merge products without overwriting existing tracked stocks
+  setProducts: (products) =>
+    set((state) => {
+      const next = { ...state.stockMap };
+      for (const p of products) {
+        if (next[p._id] === undefined) {
+          next[p._id] = p.stock;
+        }
+      }
+      return { products, stockMap: next };
+    }),
 
-  // Set individual product stock manually
   setStock: (productId, stock) =>
     set((state) => ({
-      stockMap: {
-        ...state.stockMap,
-        [productId]: stock,
-      },
+      stockMap: { ...state.stockMap, [productId]: stock },
     })),
 
-  // Update product stock reactively
   updateProductStock: (productId, newStock) =>
     set((state) => ({
-      stockMap: {
-        ...state.stockMap,
-        [productId]: newStock,
-      },
+      stockMap: { ...state.stockMap, [productId]: newStock },
     })),
 
-  // Prevent double additions
+  // ✅ New: update multiple products' stock at once
+  bulkUpdateStocks: (stockUpdates) =>
+    set((state) => {
+      const updatedStockMap = { ...state.stockMap };
+      stockUpdates.forEach(({ productId, stock }) => {
+        updatedStockMap[productId] = stock;
+      });
+      return { stockMap: updatedStockMap };
+    }),
+
   setPendingAddition: (productId, isPending) =>
     set((state) => ({
-      pendingAdditions: {
-        ...state.pendingAdditions,
-        [productId]: isPending,
-      },
+      pendingAdditions: { ...state.pendingAdditions, [productId]: isPending },
     })),
 
-  // Smart handler to prevent race condition
   safeAddToCart: async (productId, addToCart) => {
     const { pendingAdditions } = get();
-    if (pendingAdditions[productId]) return;
+    if (pendingAdditions[productId]) return null;
     get().setPendingAddition(productId, true);
     try {
-      await addToCart(productId);
-    } catch (err) {
-      console.error("Add to cart error:", err);
+      const result = await addToCart(productId);
+      return result;
     } finally {
       get().setPendingAddition(productId, false);
     }

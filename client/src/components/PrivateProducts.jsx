@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faHeart,
@@ -18,10 +18,11 @@ import { useProductStore } from "../context/ProductsStore.js";
 export const PrivateProducts = () => {
   const navigate = useNavigate();
   const { user } = useContext(AuthContext);
+  const { safeAddToCart } = useProductStore();
   const { addToCart } = useCart();
   const queryClient = useQueryClient();
   const [start, setStart] = useState(0);
-  const { stockMap } = useProductStore();
+  const { stockMap, setProducts } = useProductStore();
 
   const isSmallScreen = useMediaQuery({ maxWidth: 640 });
   const itemsPerPage = isSmallScreen ? 2 : 4;
@@ -40,6 +41,13 @@ export const PrivateProducts = () => {
     cacheTime: 1800000,
     retry: 2,
   });
+
+  // ✅ Sync Zustand store with latest products stock
+  useEffect(() => {
+    if (products.length) {
+      setProducts(products);
+    }
+  }, [products, setProducts]);
 
   const { data: favoriteProducts = [] } = useQuery({
     queryKey: ["favorites", user?.id],
@@ -220,7 +228,7 @@ export const PrivateProducts = () => {
                       navigate("/login");
                       return;
                     }
-                    addToCart(product._id);
+                    safeAddToCart(product._id, addToCart);
                   }}
                   className={`${
                     currentStock === 0

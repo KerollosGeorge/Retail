@@ -13,20 +13,20 @@ export const CartProvider = ({ children }) => {
   const [removeItemLoading, setRemoveItemLoading] = useState(false);
   const [clearCartLoading, setClearCartLoading] = useState(false);
 
-  const { updateProductStock } = useProductStore();
+  const { updateProductStock, bulkUpdateStocks } = useProductStore();
 
   useEffect(() => {
     const fetchCart = async () => {
       try {
-        const { data } = await axios.get("/api/cart");
+        const { data } = await axios.get("/api/cart"); // returns populated + total
         setCart(data);
 
-        // ✅ Hydrate stockMap with products in cart
-        if (data?.products) {
-          data.products.forEach(async (item) => {
-            const res = await axios.get(`/api/product/${item.productId}`);
-            updateProductStock(item.productId, res.data.stock);
-          });
+        // Hydrate stockMap from populated cart items (no extra requests)
+        if (data?.products?.length) {
+          const stocks = data.products
+            .filter((i) => i?.productId?._id)
+            .map((i) => ({ _id: i.productId._id, stock: i.productId.stock }));
+          if (stocks.length) bulkUpdateStocks(stocks);
         }
       } catch (err) {
         console.error("Error loading cart:", err);
@@ -35,20 +35,21 @@ export const CartProvider = ({ children }) => {
       }
     };
     fetchCart();
-  }, []);
+  }, [bulkUpdateStocks]);
 
-  const addToCart = async (productId) => {
+  const addToCart = async (productId, qty = 1) => {
     try {
       const { data } = await axios.put("/api/cart/add", {
         productId,
-        quantity: 1,
+        quantity: qty,
       });
-      setCart(data.cart);
+      setCart({ ...data.cart, total: data.total });
+
       if (data.updatedProduct?._id) {
         updateProductStock(data.updatedProduct._id, data.updatedProduct.stock);
       }
       toast.success("Added to cart");
-      return data.updatedProduct;
+      return data.updatedProduct; // so callers can use it if they want
     } catch (err) {
       toast.error(err?.response?.data?.message || "Failed to add to cart");
       throw err;
@@ -62,8 +63,10 @@ export const CartProvider = ({ children }) => {
         productId,
         quantity,
       });
-      setCart(data.cart);
-      updateProductStock(productId, data.updatedProduct.stock); // ✅ critical
+      setCart({ ...data.cart, total: data.total });
+      if (data.updatedProduct?._id) {
+        updateProductStock(data.updatedProduct._id, data.updatedProduct.stock);
+      }
       toast.success("Quantity updated");
     } catch (err) {
       toast.error(err?.response?.data?.message || "Failed to update quantity");
@@ -76,7 +79,7 @@ export const CartProvider = ({ children }) => {
     try {
       setRemoveItemLoading(true);
       const { data } = await axios.put("/api/cart/remove", { productId });
-      setCart(data.cart);
+      setCart({ ...data.cart, total: data.total });
       if (data.updatedProduct?._id) {
         updateProductStock(data.updatedProduct._id, data.updatedProduct.stock);
       }
@@ -94,14 +97,18 @@ export const CartProvider = ({ children }) => {
       const { data } = await axios.put("/api/cart/clear");
       setCart({ products: [], total: 0 });
 
-      if (Array.isArray(data.restoredProducts)) {
-        data.restoredProducts.forEach((prod) =>
-          updateProductStock(prod._id, prod.stock)
+      if (
+        Array.isArray(data.restoredProducts) &&
+        data.restoredProducts.length
+      ) {
+        // refresh many stocks at once
+        bulkUpdateStocks(
+          data.restoredProducts.map((p) => ({ _id: p._id, stock: p.stock }))
         );
       }
       toast.success("Cart cleared");
     } catch (err) {
-      toast.error("Failed to clear cart");
+      toast.error(err?.response?.data?.message || "Failed to clear cart");
     } finally {
       setClearCartLoading(false);
     }
